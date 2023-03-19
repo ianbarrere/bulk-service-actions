@@ -1,0 +1,364 @@
+module bulk-service-actions {
+  yang-version 1.1;
+
+  namespace "urn:ibarrere:nso:automation:bulk-service-actions:0";
+  prefix bulk-service-actions;
+
+  import ietf-inet-types { prefix inet; }
+  import ietf-yang-types { prefix yang; }
+  import tailf-common { prefix tailf; }
+  import tailf-ncs { prefix ncs; }
+
+  organization "Independent";
+  contact "ian.barrere@gmail.com";
+  description
+    "Action package for bulk service actions";
+
+  revision 2023-01-10 {
+    description "[IB] Initial revision";
+    reference "N/A";
+  }
+
+  grouping input-options {
+    uses targets;
+    container commit-flags {
+      description "Commit flags";
+      leaf dry-run {
+        type boolean;
+        default true;
+        description "dry-run, default is true";
+      }
+      leaf no-networking {
+        type boolean;
+        default false;
+        description "no-networking, default is false";
+      }
+    }
+  }
+
+  grouping targets {
+    container targets {
+      presence true;
+      description "Targets";
+      container all {
+        presence true;
+        description "All services or subset thereof";
+        container subset {
+          when "count(../../keypath) = 0";
+          presence true;
+          description "Selection for subset of all";
+          leaf last-redeploy-error {
+            type empty;
+            description "Target for all entries with last-redeploy-error";
+          }
+          leaf no-dry-run-diff {
+            type empty;
+            description "Target for all entries with no dry-run diff";
+          }
+          leaf no-dry-run-fetched-at {
+            type empty;
+            description "Target for all entries with no dry-run fetched-at timestamp";
+          }
+          leaf no-redeployed-at {
+            type empty;
+            description "Target for all entries with no redeployed-at timestamp";
+          }
+          leaf redeployed-at {
+            type empty;
+            description "Target for all entries with redeployed-at timestamp";
+          }
+          leaf redeploy-ready {
+            type empty;
+            description "Target for all entries with redeploy-ready set";
+          }
+        }
+      }
+      leaf-list keypath {
+        type string;
+        tailf:non-strict-leafref {
+          path "/bulk-service-actions/services/keypath";
+        }
+        description "Including/excluding given keypaths";
+      }
+    }
+  }
+
+  grouping dry-run-fields {
+    leaf device {
+      type string;
+      description "Device from native dry-run";
+    }
+    leaf output {
+      type string;
+      description "Output from native dry-run";
+    }
+  }
+
+  grouping redeploy-details {
+    container dry-run {
+      presence true;
+      description "Dry-run data";
+      leaf fetched-at {
+        type yang:date-and-time;
+        description "Time at which the dry-run was executed";
+      }
+      list unaltered-output {
+        key "device";
+        tailf:hidden debug;
+        description "Output from dry-run without wildcards";
+        uses dry-run-fields;
+      }
+      list output {
+        key "device";
+        description "Output from dry-run";
+        uses dry-run-fields;
+      }
+    }
+    leaf redeployed-at {
+      type yang:date-and-time;
+      description "Time at which the service was redeployed";
+    }
+    leaf last-redeploy-error {
+      type string;
+      description "Last redeploy error";
+    }
+  }
+
+  container bulk-service-actions {
+    description "Container for bulk-service-actions";
+    container settings {
+      description "Settings for bulk-service-actions";
+      container service-list {
+        presence true;
+        description "Settings for services";
+        // servicepoint for clearing operational data after change to settings
+        uses ncs:service-data;
+        ncs:servicepoint bulk-service-actions-service-list-service;
+
+        leaf-list top-level-types {
+          type string;
+          description "Service paths to include in service-list";
+        }
+        leaf-list target-sublayers {
+          type string;
+          description "List of modified services to target for reconciliation";
+        }
+      }
+      container diff-checking {
+        description "Settings for diff checking and approval";
+        leaf-list wildcard {
+          type string;
+          description "Regex wildcard string to exclude from diff checking";
+        }
+      }
+    }
+    // scheduler service
+    list activity {
+      key "name";
+      description "Scheduler service for bulk service actions";
+      uses ncs:service-data;
+      ncs:servicepoint bulk-service-actions-scheduler;
+      leaf name {
+        type string;
+        description "Activity name";
+      }
+      container action {
+        presence true;
+        description "Action to perform";
+        choice action {
+          mandatory true;
+          case redeploy-top-level {
+            leaf redeploy-top-level {
+              type empty;
+              description "Schedule redeploy-top-level action";
+            }
+          }
+          case reconcile-sublayers {
+            leaf reconcile-sublayers {
+              type empty;
+              description "Schedule reconcile-sublayers action";
+            }
+          }
+        }
+      }
+      uses input-options;
+      leaf interval {
+        type uint16;
+        default 30;
+        description "Interval in seconds between tasks, default 30";
+      }
+      container schedule {
+        description "Time at which to start";
+        choice relative-or-absolute {
+          case relative {
+            leaf in-time {
+              type string {
+                pattern "[0-9]{2}h[0-9]{2}m";
+              }
+              description "Relative time from now to schedule, hours and minutes required even if 00";
+            }
+          }
+          case absolute {
+            leaf at-time {
+              type yang:date-and-time;
+              description "Absolute time at which to start";
+            }
+          }
+        }
+      }
+    }
+
+    // approved diffs list
+    list approved-diffs {
+      key "diff";
+      description "List of approved diffs for redeploy comparison";
+      leaf diff {
+        type string;
+        description "Approved diff";
+      }
+    }
+
+    // actions
+    tailf:action service-list {
+      tailf:info "Action to interact with service list";
+      tailf:actionpoint service-list;
+      input {
+        choice populate-or-prune {
+          case populate {
+            leaf populate {
+              type empty;
+              description "Populate the service list";
+            }
+          }
+          case clear {
+            container clear {
+              presence true;
+              description "Clear operational data options, all + keypath excludes given keypaths from clear.";
+              uses targets;
+            }
+          }
+        }
+      }
+      output {
+        leaf output {
+          type string;
+          description "Action output";
+        }
+      }
+    }
+    tailf:action redeploy-top-level {
+      tailf:info "Action to redeploy specified top-level services";
+      tailf:actionpoint redeploy-top-level;
+      input {
+        uses input-options;
+      }
+      output {
+        leaf output {
+          type string;
+          description "Action output";
+        }
+      }
+    }
+    tailf:action reconcile-sublayers {
+      tailf:info "Action to reconcile modified services of a top-level service";
+      tailf:actionpoint reconcile-sublayers;
+      input {
+        uses input-options;
+      }
+      output {
+        leaf output {
+          type string;
+          description "Action output";
+        }
+      }
+    }
+    tailf:action service-list-tools {
+      tailf:info "Action to interact with operational data at /bulk-service-actions/services";
+      tailf:actionpoint service-list-tools;
+      input {
+        choice operation {
+          case redeploy-ready {
+            container redeploy-ready {
+              presence true;
+              description "Mark services as redeploy-ready or not, all + keypath excludes given keypaths from marking";
+              uses targets;
+              leaf operation {
+                type enumeration {
+                  enum "add";
+                  enum "remove";
+                }
+                default "add";
+                description "Add or remove redeploy-ready flag";
+              }
+            }
+          }
+          case wildcards {
+            container wildcards {
+              presence true;
+              description "Interact with wildcards";
+              leaf operation {
+                type enumeration {
+                  enum "update";
+                  enum "rollback";
+                }
+                description "Update or rollback wildcards";
+              }
+            }
+          }
+          case approve-diff {
+            container diff-approval {
+              presence true;
+              description "Tools for diff approval";
+              choice approve-or-check {
+                case approve {
+                  leaf approve-diff {
+                    type string;
+                    tailf:non-strict-leafref {
+                      path "/bulk-service-actions/services/keypath";
+                    }
+                    description "Mark a service's diff as approved";
+                  }
+                }
+                case check {
+                  leaf check-approvals {
+                    type empty;
+                    description "Crosscheck approved diffs with services";
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      output {}
+    }
+
+    list services {
+      key "keypath";
+      config false;
+      tailf:cdb-oper {
+        tailf:persistent true;
+      }
+      description "List of services with relevant details for redeploy actions";
+      leaf keypath {
+        type string;
+        description "Keypath of service";
+      }
+      uses redeploy-details;
+      leaf redeploy-ready {
+        type empty;
+        description "Marks a service as ready for redeploy";
+      }
+
+      list modified-services {
+        key "keypath";
+        description "Sublayer services modified by main service";
+        leaf keypath {
+          type string;
+          description "Keypath of service or error message if unable to derive";
+        }
+        uses redeploy-details;
+      }
+    }
+  }
+}

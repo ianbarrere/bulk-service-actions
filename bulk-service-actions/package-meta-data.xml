@@ -1,0 +1,12 @@
+<ncs-package xmlns="http://tail-f.com/ns/ncs-packages">
+  <name>bulk-service-actions</name>
+  <package-version>1.0.0</package-version>
+  <description>Package for handling bulk service redeploys</description>
+  <ncs-min-version>5.6</ncs-min-version>
+  <component>
+    <name>main</name>
+    <application>
+      <python-class-name>bulk_service_actions.main.Main</python-class-name>
+    </application>
+  </component>
+</ncs-package>
